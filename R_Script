@@ -1,0 +1,75 @@
+library(tidyverse)
+library(readxl)
+# OPEN AND READ YOUR FILE
+# example from the publication
+# read Supplemental Tables from Alpert et al. (2019).
+#excel_doc<-"/Users/huden/Downloads/Merlin_diffusion/41591_2019_381_MOESM3_ESM.xlsx"
+# file can be downloaded from https://static-content.springer.com/esm/art%3A10.1038%2Fs41591-019-0381-y/MediaObjects/41591_2019_381_MOESM3_ESM.xlsx"
+# cell frequency data in sTable 5 of Alpert et al. (2019)
+#cell.frequencies <- read_excel(excel_doc, sheet=5L,skip=2,col_types = "numeric",na=c("","NA"))
+cell_frequencies=read.csv("~/Documents/INVESTIGATIONS/Merlin_diffusion/Run_130624/Unormalized_SAID.csv" ,na=c("","NA"))
+#values of AGE should be between 0 and 1 for transformation
+factor_age=max(cell_frequencies$Age)
+cell_frequencies$AGE <-cell_frequencies$Age/factor_age
+
+#only needed if you want to select some specific cells
+# list of variables potentially compatible to the DVS (Dortmund Vital Study (ClinicalTrials.gov Identifier: NCT05155397))
+compatible<-c(
+  "T_cell",
+  "Naive_CD4",
+  "EM_CD4",
+  "EM_CD8",
+  "EMRA_CD8",
+  "CD28_CD8",
+  "CD57_CD8",
+  "FOXP3_CD4B"
+)
+
+# Approximation of IMM-AGE by principal component analysis using package pls
+library(pls)
+
+# data frame with selected predictors
+nam.pcr<-c("log.T_cell",
+           "log.Naive_CD4",
+           "log.EM_CD4",
+           "log.EM_CD8",
+           "log.EMRA_CD8",
+           "log.CD28_CD8",
+           "log.CD57_CD8",
+           "log.FOXP3_CD4"
+)
+# calculate predictors
+cell.data<-within(cell_frequencies,
+                    {
+                      log.Naive_CD4 <- log(Naive_CD4/T_cell)
+                      log.EM_CD4=log(EM_CD4/T_cell)
+                      log.EM_CD8=log(EM_CD8/T_cell)
+                      log.EMRA_CD8=log(EMRA_CD8/T_cell)
+                      log.CD28_CD8=log(CD28_CD8/T_cell)
+                      log.CD57_CD8=log(CD57_CD8/T_cell)
+                      log.FOXP3_CD4=log(FOXP3_CD4/T_cell)
+                    }
+)
+# reduced data for fitting
+cell.index.pcr<-cell.data[,which(names(cell.data) %in% nam.pcr)]
+# fit to logit-transformed AGE ranging between 0 and 1 (including the limits)
+# Function to transform rates for beta regression because values of 0 and/or 1 may occur, cf.Smithson, M., Verkuilen, J., 2006.
+transform_rate <- function(rate) {
+    (rate * (length(rate) - 1) + 0.5)/length(rate)
+}
+
+cell.index.pcr$y = transform_rate(cell.data$AGE)
+cell.index.pcr$logit.age<-log(cell.index.pcr$y/(1-cell.index.pcr$y))
+cell.index.pcr$y<-NULL
+
+# for reproducibility initialize random number generator
+set.seed (1000)
+pcr.model <- pcr(logit.age~., data = cell.index.pcr, scale = TRUE, validation = "CV")
+# Model summary
+summary(pcr.model)
+# In this example 4-component model yields lowest prediction error
+# therefore, use this model for prediction and calculation of IMMAX
+cell.data$IMMAX<-plogis(predict(pcr.model,ncomp=4,newdata = cell.data))
+#scale back the IMMAX values to compare to biological age
+#display both data
+data.frame(cell.data$Age,cell.data$`IMMAX`,cell.data$AGE)
